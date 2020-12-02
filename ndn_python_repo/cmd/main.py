@@ -3,6 +3,7 @@ import asyncio as aio
 import logging
 import pkg_resources
 import sys
+import os
 from ndn.app import NDNApp
 from ndn.encoding import Name
 from ndn_python_repo import *
@@ -74,6 +75,18 @@ def config_logging(config: dict):
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=log_level)
 
+def insert_callback(ndn_name, bytes):
+    logging.info("Received file {} with {} bytes".format(Name.to_str(ndn_name), len(bytes)))
+
+    #Todo: Decrypt bytes here before writing it to disk
+
+    local_filename = '/'.join(("./dest/" + Name.to_str(ndn_name)).split("/")[:-1])
+    local_folder = os.path.dirname(local_filename)
+    if local_folder:
+        os.makedirs(local_folder, exist_ok=True)
+    with open(local_filename, 'wb') as f:
+        f.write(bytes)
+    logging.info("Wrote {} to disk".format(local_filename))
 
 def main() -> int:
     cmdline_args = process_cmd_opts()
@@ -82,17 +95,12 @@ def main() -> int:
 
     config_logging(config['logging_config'])
 
-    storage = create_storage(config['db_config'])
-
     app = NDNApp()
 
     pb = PubSub(app)
-    read_handle = ReadHandle(app, storage, config)
-    write_handle = WriteCommandHandle(app, storage, pb, read_handle, config)
-    delete_handle = DeleteCommandHandle(app, storage, pb, read_handle, config)
-    tcp_bulk_insert_handle = TcpBulkInsertHandle(storage, read_handle, config)
+    write_handle = WriteCommandHandle(app, None, pb, read_handle, config, insert_callback)
 
-    repo = Repo(app, storage, read_handle, write_handle, delete_handle, tcp_bulk_insert_handle, config)
+    repo = Repo(app, None, None, write_handle, None, None, config)
     aio.ensure_future(repo.listen())
 
     try:

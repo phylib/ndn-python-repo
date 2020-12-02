@@ -17,7 +17,7 @@ class WriteCommandHandle(CommandHandle):
     TODO: Add validator
     """
     def __init__(self, app: NDNApp, storage: Storage, pb: PubSub, read_handle: ReadHandle,
-                 config: dict):
+                 config: dict, insert_callback: None):
         """
         Write handle need to keep a reference to write handle to register new prefixes.
 
@@ -30,6 +30,7 @@ class WriteCommandHandle(CommandHandle):
         self.m_read_handle = read_handle
         self.prefix = None
         self.register_root = config['repo_config']['register_root']
+        self.insert_callback = insert_callback
 
     async def listen(self, prefix: NonStrictName):
         """
@@ -95,14 +96,14 @@ class WriteCommandHandle(CommandHandle):
         self.m_processes[process_id].insert_num = 0
 
         # Remember the prefixes to register
-        if register_prefix:
-            is_existing = CommandHandle.add_registered_prefix_in_storage(self.storage, register_prefix)
-            # If repo does not register root prefix, the client tells repo what to register
-            if not self.register_root and not is_existing:
-                self.m_read_handle.listen(register_prefix)
-
-        # Remember the files inserted, this is useful for enumerating all inserted files
-        CommandHandle.add_inserted_filename_in_storage(self.storage, name)
+        # if register_prefix:
+        #     is_existing = CommandHandle.add_registered_prefix_in_storage(self.storage, register_prefix)
+        #     # If repo does not register root prefix, the client tells repo what to register
+        #     if not self.register_root and not is_existing:
+        #         self.m_read_handle.listen(register_prefix)
+        #
+        # # Remember the files inserted, this is useful for enumerating all inserted files
+        # CommandHandle.add_inserted_filename_in_storage(self.storage, name)
 
         # Start data fetching process
         self.m_processes[process_id].status_code = 300
@@ -161,16 +162,18 @@ class WriteCommandHandle(CommandHandle):
         :return:  Number of data packets fetched.
         """
         try:
-            data_name, _, _, data_bytes = await self.app.express_interest(
+            data_name, _, content, data_bytes = await self.app.express_interest(
                 name, need_raw_packet=True, can_be_prefix=False, lifetime=1000,
                 forwarding_hint=forwarding_hint)
+            if self.insert_callback != None:
+                self.insert_callback(data_name, content)
         except InterestNack as e:
             logging.info(f'Nacked with reason={e.reason}')
             return 0
         except InterestTimeout:
             logging.info(f'Timeout')
             return 0
-        self.storage.put_data_packet(data_name, data_bytes)
+        # self.storage.put_data_packet(data_name, data_bytes)
         return 1
 
     async def fetch_segmented_data(self, name, start_block_id: int, end_block_id: Optional[int],
@@ -182,8 +185,16 @@ class WriteCommandHandle(CommandHandle):
         """
         semaphore = aio.Semaphore(10)
         block_id = start_block_id
-        async for (data_name, _, _, data_bytes) in concurrent_fetcher(self.app, name, start_block_id, end_block_id, semaphore, forwarding_hint=forwarding_hint):
-            self.storage.put_data_packet(data_name, data_bytes)
+        b_array = bytearray()
+        #Todo: Verify signature in concurrent_fetcher, or later in loop.
+        async for (data_name, _, content, data_bytes) in concurrent_fetcher(self.app, name, start_block_id, end_block_id, semaphore, forwarding_hint=forwarding_hint):
+            #self.storage.put_data_packet(data_name, data_bytes)
+
+            b_array.extend(content)
             block_id += 1
+
+        if self.insert_callback != None:
+            self.insert_callback(name, b_array)
+
         insert_num = block_id - start_block_id
         return insert_num

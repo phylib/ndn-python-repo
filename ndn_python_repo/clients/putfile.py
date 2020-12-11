@@ -8,13 +8,20 @@
 
 import os
 import sys
+from os import urandom
+
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import pad, unpad
+from Cryptodome.Hash import SHA256
+from Cryptodome.Signature import DSS
+
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 
 import asyncio as aio
 from .command_checker import CommandChecker
 from ..command.repo_commands import RepoCommandParameter, RepoCommandResponse, ForwardingHint,\
     RegisterPrefix, CheckPrefix
-from ..utils import PubSub
+from ..utils import PubSub, EncryptedPack, EncryptedContent
 import logging
 import multiprocessing
 from ndn.app import NDNApp
@@ -29,12 +36,30 @@ from typing import List, Optional
 
 if not os.environ.get('READTHEDOCS'):
     app_to_create_packet = None   # used for _create_packets only
-    def _create_packets(name, content, freshness_period, final_block_id):
+    def _create_packets(name, content, freshness_period, final_block_id, identity):
         """
         Worker for parallelize prepare_data().
         This function has to be defined at the top level, so that it can be pickled and used
         by multiprocessing.
         """
+        iv = urandom(16)
+        aes_key = urandom(16)
+        logging.info('IV:')
+        logging.info(bytes(iv))
+        logging.info('AES:')
+        logging.info(bytes(aes_key))
+        cipher = AES.new(bytes(aes_key), AES.MODE_CBC, iv)
+        ct_bytes = cipher.encrypt(pad(content, 16))
+
+        encrypted_content = EncryptedContent()
+        encrypted_content.pack = EncryptedPack()
+        encrypted_content.pack.payload = ct_bytes
+        encrypted_content.pack.payload_key = aes_key
+        encrypted_content.pack.iv = iv
+        # TODO: use keyname
+        encrypted_content.pack.name = identity
+        content = encrypted_content.encode()
+
         # The keychain's sqlite3 connection is not thread-safe. Create a new NDNApp instance for
         # each process, so that each process gets a separate sqlite3 connection
         global app_to_create_packet
@@ -42,8 +67,9 @@ if not os.environ.get('READTHEDOCS'):
             app_to_create_packet = NDNApp()
 
         packet = app_to_create_packet.prepare_data(name, content,
-                                                freshness_period=freshness_period,
-                                                final_block_id=final_block_id)
+                                                 freshness_period=freshness_period,
+                                                 final_block_id=final_block_id,
+                                                 identity=identity)
         return bytes(packet)
 
 
@@ -86,6 +112,7 @@ class PutfileClient(object):
             return 0
 
         # use multiple threads to speed up creating TLV
+        segment_size = segment_size - 100 # deduct the TLV overhead
         seg_cnt = (len(b_array) + segment_size - 1) // segment_size
         final_block_id = Component.from_segment(seg_cnt - 1)
         packet_params = [[
@@ -93,6 +120,7 @@ class PutfileClient(object):
             b_array[seq * segment_size : (seq + 1) * segment_size],
             freshness_period,
             final_block_id,
+            self.prefix
         ] for seq in range(seg_cnt)]
 
         self.encoded_packets[Name.to_str(name_at_repo)] = []

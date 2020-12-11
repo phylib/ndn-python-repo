@@ -1,11 +1,24 @@
 import asyncio as aio
 import logging
+import struct
+import time
+from hashlib import sha256
+from os import urandom
+from random import SystemRandom
+from typing import Optional
+
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import pad, unpad
+from Cryptodome.Hash import SHA256
+from Cryptodome.Signature import DSS
+from Cryptodome.PublicKey import ECC
+
 from ndn.app import NDNApp
-from ndn.encoding import Name, InterestParam, NonStrictName, DecodeError
+from ndn.encoding import Name, InterestParam, NonStrictName, DecodeError, FormalName, SignaturePtrs, SignatureType, parse_and_check_tl
 from ndn.types import InterestNack, InterestTimeout
 from . import ReadHandle, CommandHandle
 from ..command.repo_commands import RepoCommandParameter, RepoCommandResponse
-from ..utils import concurrent_fetcher, PubSub
+from ..utils import concurrent_fetcher, PubSub, EncryptedPack, EncryptedContent, TLV_ENCRYPTED_CONTENT_TYPE
 from ..storage import Storage
 from typing import Optional
 
@@ -187,10 +200,19 @@ class WriteCommandHandle(CommandHandle):
         block_id = start_block_id
         b_array = bytearray()
         #Todo: Verify signature in concurrent_fetcher, or later in loop.
-        async for (data_name, _, content, data_bytes) in concurrent_fetcher(self.app, name, start_block_id, end_block_id, semaphore, forwarding_hint=forwarding_hint):
-            #self.storage.put_data_packet(data_name, data_bytes)
-
-            b_array.extend(content)
+        async for (data_name, _, content, data_bytes) in concurrent_fetcher(self.app, name, start_block_id, end_block_id, semaphore, forwarding_hint=forwarding_hint,
+                                                                            validator=self.verify_signature):
+            # Decryption
+            logging.debug(f'Received Data content size', len(content))
+            pack_bytes = parse_and_check_tl(bytes(content), TLV_ENCRYPTED_CONTENT_TYPE)
+            pack = EncryptedPack.parse(pack_bytes)
+            # logging.debug('IV:')
+            # logging.debug(bytes(pack.iv))
+            # logging.debug('AES:')
+            # logging.debug(bytes(pack.payload_key))
+            cipher = AES.new(bytes(pack.payload_key), AES.MODE_CBC, pack.iv)
+            payload = cipher.decrypt(bytes(pack.payload))
+            b_array.extend(payload)
             block_id += 1
 
         if self.insert_callback != None:
@@ -198,3 +220,33 @@ class WriteCommandHandle(CommandHandle):
 
         insert_num = block_id - start_block_id
         return insert_num
+
+    async def verify_signature(self, name: FormalName, sig: SignaturePtrs) -> bool:
+        sig_info = sig.signature_info
+        covered_part = sig.signature_covered_part
+        sig_value = sig.signature_value_buf
+        if not sig_info or sig_info.signature_type != SignatureType.SHA256_WITH_ECDSA:
+            return False
+        if not covered_part or not sig_value:
+            return False
+        identity = [sig_info.key_locator.name[0]]
+        logging.debug('Extract identity id from key id: %s', Name.to_str(identity))
+        key_bits = None
+        try:
+            key_bits = self.app.keychain.get(identity).default_key().key_bits
+        except (KeyError, AttributeError):
+            logging.error('Cannot find pub key from keychain')
+            return False
+        pk = ECC.import_key(key_bits)
+        verifier = DSS.new(pk, 'fips-186-3', 'der')
+        sha256_hash = SHA256.new()
+        for blk in covered_part:
+            sha256_hash.update(blk)
+        logging.debug(bytes(sig_value))
+        logging.debug(len(bytes(sig_value)))
+        try:
+            verifier.verify(sha256_hash, bytes(sig_value))
+        except ValueError:
+            return False
+        logging.debug('Pass the signature verification')
+        return True

@@ -211,7 +211,7 @@ class WriteCommandHandle(CommandHandle):
             # logging.debug('AES:')
             # logging.debug(bytes(pack.payload_key))
             cipher = AES.new(bytes(pack.payload_key), AES.MODE_CBC, pack.iv)
-            payload = cipher.decrypt(bytes(pack.payload))
+            payload = unpad(cipher.decrypt(bytes(pack.payload)), 16)
             b_array.extend(payload)
             block_id += 1
 

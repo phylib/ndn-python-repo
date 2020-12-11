@@ -57,7 +57,7 @@ if not os.environ.get('READTHEDOCS'):
         encrypted_content.pack.payload_key = aes_key
         encrypted_content.pack.iv = iv
         # TODO: use keyname
-        encrypted_content.pack.name = identity
+        # encrypted_content.pack.name = identity
         content = encrypted_content.encode()
 
         # The keychain's sqlite3 connection is not thread-safe. Create a new NDNApp instance for

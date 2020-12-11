@@ -4,6 +4,7 @@ import logging
 import pkg_resources
 import sys
 import os
+import requests
 from ndn.app import NDNApp
 from ndn.encoding import Name
 from ndn_python_repo import *
@@ -80,7 +81,8 @@ def insert_callback(ndn_name, bytes):
 
     #Todo: Decrypt bytes here before writing it to disk
 
-    local_filename = '/'.join(("./dest/" + Name.to_str(ndn_name)).split("/")[:-1])
+    decoded_fname = requests.utils.unquote(Name.to_str(ndn_name))
+    local_filename = '/'.join(("./dest/" + decoded_fname).split("/")[:-1])
     local_folder = os.path.dirname(local_filename)
     if local_folder:
         os.makedirs(local_folder, exist_ok=True)

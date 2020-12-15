@@ -4,3 +4,4 @@ python-ndn>=0.2b2.post1
 PyYAML>=5.1.2
 plyvel>=1.2.0
 pymongo>=3.10.1
+subprocess

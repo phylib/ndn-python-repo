@@ -4,6 +4,7 @@ import struct
 import time
 from hashlib import sha256
 from os import urandom
+import subprocess
 from random import SystemRandom
 from typing import Optional
 from base64 import b64decode
@@ -45,6 +46,8 @@ class WriteCommandHandle(CommandHandle):
         self.prefix = None
         self.register_root = config['repo_config']['register_root']
         self.content_key_path = config['security_config']['content_key']['path']
+        self.content_key_path = config['security_config']['cert']['path']
+        subprocess.run(['ndnsec-import', self.content_key_path, '-P', '1234'], stdout=subprocess.PIPE)
 
         with open(self.content_key_path) as fp:
             self.content_key_name = fp.readline()[:-1]

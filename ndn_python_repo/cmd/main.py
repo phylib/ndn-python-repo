@@ -4,6 +4,7 @@ import logging
 import pkg_resources
 import sys
 import os
+import subprocess
 import requests
 from ndn.app import NDNApp
 from ndn.encoding import Name
@@ -96,6 +97,7 @@ def main() -> int:
     print(config)
 
     config_logging(config['logging_config'])
+    subprocess.run(['ndnsec-import', config['security_config']['cert']['path'], '-P', '1234'], stdout=subprocess.PIPE)
 
     app = NDNApp()
 

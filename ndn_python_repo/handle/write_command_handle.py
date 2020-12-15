@@ -6,6 +6,7 @@ from hashlib import sha256
 from os import urandom
 from random import SystemRandom
 from typing import Optional
+from base64 import b64decode
 
 from Cryptodome.Cipher import AES
 from Cryptodome.Util.Padding import pad, unpad
@@ -43,6 +44,12 @@ class WriteCommandHandle(CommandHandle):
         self.m_read_handle = read_handle
         self.prefix = None
         self.register_root = config['repo_config']['register_root']
+        self.content_key_path = config['security_config']['content_key']['path']
+
+        with open(self.content_key_path) as fp:
+            self.content_key_name = fp.readline()[:-1]
+            self.content_key_bits = b64decode(fp.readline())
+
         self.insert_callback = insert_callback
 
     async def listen(self, prefix: NonStrictName):
@@ -206,11 +213,7 @@ class WriteCommandHandle(CommandHandle):
             logging.debug(f'Received Data content size', len(content))
             pack_bytes = parse_and_check_tl(bytes(content), TLV_ENCRYPTED_CONTENT_TYPE)
             pack = EncryptedPack.parse(pack_bytes)
-            # logging.debug('IV:')
-            # logging.debug(bytes(pack.iv))
-            # logging.debug('AES:')
-            # logging.debug(bytes(pack.payload_key))
-            cipher = AES.new(bytes(pack.payload_key), AES.MODE_CBC, pack.iv)
+            cipher = AES.new(self.content_key_bits, AES.MODE_CBC, pack.iv)
             payload = unpad(cipher.decrypt(bytes(pack.payload)), 16)
             b_array.extend(payload)
             block_id += 1

@@ -9,6 +9,7 @@
 import os
 import sys
 from os import urandom
+from base64 import b64decode
 
 from Cryptodome.Cipher import AES
 from Cryptodome.Util.Padding import pad, unpad
@@ -36,30 +37,22 @@ from typing import List, Optional
 
 if not os.environ.get('READTHEDOCS'):
     app_to_create_packet = None   # used for _create_packets only
-    def _create_packets(name, content, freshness_period, final_block_id, identity):
+    def _create_packets(name, content, freshness_period, final_block_id, identity, content_key_bits):
         """
         Worker for parallelize prepare_data().
         This function has to be defined at the top level, so that it can be pickled and used
         by multiprocessing.
         """
         iv = urandom(16)
-        aes_key = urandom(16)
-        logging.info('IV:')
-        logging.info(bytes(iv))
-        logging.info('AES:')
-        logging.info(bytes(aes_key))
-        cipher = AES.new(bytes(aes_key), AES.MODE_CBC, iv)
+        cipher = AES.new(bytes(content_key_bits), AES.MODE_CBC, iv)
         ct_bytes = cipher.encrypt(pad(content, 16))
 
         encrypted_content = EncryptedContent()
         encrypted_content.pack = EncryptedPack()
         encrypted_content.pack.payload = ct_bytes
-        encrypted_content.pack.payload_key = aes_key
-        encrypted_content.pack.iv = iv
-        # TODO: use keyname
+        # encrypted_content.pack.payload_key = content_key_bits
         # encrypted_content.pack.name = identity
         content = encrypted_content.encode()
-
         # The keychain's sqlite3 connection is not thread-safe. Create a new NDNApp instance for
         # each process, so that each process gets a separate sqlite3 connection
         global app_to_create_packet
@@ -75,7 +68,7 @@ if not os.environ.get('READTHEDOCS'):
 
 class PutfileClient(object):
 
-    def __init__(self, app: NDNApp, prefix: NonStrictName, repo_name: NonStrictName):
+    def __init__(self, app: NDNApp, prefix: NonStrictName, repo_name: NonStrictName, content_key_path: str):
         """
         A client to insert files into the repo.
 
@@ -86,6 +79,12 @@ class PutfileClient(object):
         self.app = app
         self.prefix = prefix
         self.repo_name = repo_name
+        self.content_key_path = content_key_path
+
+        with open(content_key_path) as fp:
+            self.content_key_name = fp.readline()[:-1]
+            self.content_key_bits = b64decode(fp.readline())
+
         self.encoded_packets = {}
         self.pb = PubSub(self.app, self.prefix)
         self.pb.base_prefix = self.prefix
@@ -120,7 +119,8 @@ class PutfileClient(object):
             b_array[seq * segment_size : (seq + 1) * segment_size],
             freshness_period,
             final_block_id,
-            self.prefix
+            self.prefix,
+            self.content_key_bits
         ] for seq in range(seg_cnt)]
 
         self.encoded_packets[Name.to_str(name_at_repo)] = []

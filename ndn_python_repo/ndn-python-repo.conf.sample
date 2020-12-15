@@ -33,3 +33,11 @@ logging_config:
   level: 'INFO'
   # absolute path to log file. If not given, logs to stdout
   # file: 'repo.log'
+
+security_config:
+  cert:
+    'path': '/home/pi/repo/key/node_a.ndnkey'
+    # filepath to publisher's certificate and identity key
+  content_key:
+    'path': '/home/pi/repo/key/node_a-aes.key'
+    # filepath to publisher's content encrytion key

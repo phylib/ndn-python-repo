@@ -6,6 +6,7 @@ import sys
 import os
 import subprocess
 import requests
+from base64 import b64decode
 from ndn.app import NDNApp
 from ndn.encoding import Name
 from ndn_python_repo import *
@@ -97,12 +98,26 @@ def main() -> int:
     print(config)
 
     config_logging(config['logging_config'])
-    subprocess.run(['ndnsec-import', config['security_config']['cert']['path'], '-P', '1234'], stdout=subprocess.PIPE)
+
+    content_encryption_keys = {}
+    key_dir = config['security_config']['dir']
+    for f in os.listdir(key_dir):
+        # install all identities found
+        if os.path.splitext(f)[1] == '.ndnkey':
+            print("Finding identity file {}".format(f))
+            subprocess.run(['ndnsec-import', key_dir + f, '-P', '1234'], stdout=subprocess.PIPE)
+        # load all content encryption key found
+        elif os.path.splitext(f)[1] == '.key':
+            print("Finding content encryption file {}".format(f))
+            with open(key_dir + f) as fp:
+                fp.readline()[:-1]
+                key_id = b64decode(fp.readline()[:-1])
+                content_encryption_keys[bytes(key_id)] = b64decode(fp.readline())
 
     app = NDNApp()
 
     pb = PubSub(app)
-    write_handle = WriteCommandHandle(app, None, pb, read_handle, config, insert_callback)
+    write_handle = WriteCommandHandle(app, None, pb, read_handle, config, insert_callback, content_encryption_keys)
 
     repo = Repo(app, None, None, write_handle, None, None, config)
     aio.ensure_future(repo.listen())

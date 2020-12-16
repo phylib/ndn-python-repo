@@ -35,9 +35,5 @@ logging_config:
   # file: 'repo.log'
 
 security_config:
-  cert:
-    'path': '/home/pi/repo/key/node_a.ndnkey'
-    # filepath to publisher's certificate and identity key
-  content_key:
-    'path': '/home/pi/repo/key/node_a-aes.key'
-    # filepath to publisher's content encrytion key
+    dir: '/home/pi/repo-client/key/'
+    # directory to key files

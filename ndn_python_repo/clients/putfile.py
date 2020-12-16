@@ -37,7 +37,8 @@ from typing import List, Optional
 
 if not os.environ.get('READTHEDOCS'):
     app_to_create_packet = None   # used for _create_packets only
-    def _create_packets(name, content, freshness_period, final_block_id, identity, content_key_bits):
+    def _create_packets(name, content, freshness_period, final_block_id,
+                        identity, content_key_name, content_key_bits):
         """
         Worker for parallelize prepare_data().
         This function has to be defined at the top level, so that it can be pickled and used
@@ -50,8 +51,7 @@ if not os.environ.get('READTHEDOCS'):
         encrypted_content = EncryptedContent()
         encrypted_content.pack = EncryptedPack()
         encrypted_content.pack.payload = ct_bytes
-        # encrypted_content.pack.payload_key = content_key_bits
-        # encrypted_content.pack.name = identity
+        encrypted_content.pack.name = content_key_name
         content = encrypted_content.encode()
         # The keychain's sqlite3 connection is not thread-safe. Create a new NDNApp instance for
         # each process, so that each process gets a separate sqlite3 connection
@@ -68,7 +68,7 @@ if not os.environ.get('READTHEDOCS'):
 
 class PutfileClient(object):
 
-    def __init__(self, app: NDNApp, prefix: NonStrictName, repo_name: NonStrictName, content_key_path: str):
+    def __init__(self, app: NDNApp, prefix: NonStrictName, repo_name: NonStrictName, keydir: str):
         """
         A client to insert files into the repo.
 
@@ -79,12 +79,12 @@ class PutfileClient(object):
         self.app = app
         self.prefix = prefix
         self.repo_name = repo_name
-        self.content_key_path = content_key_path
 
-        with open(content_key_path) as fp:
-            self.content_key_name = fp.readline()[:-1]
+        # load encryption key
+        with open(keydir + Name.to_str(self.prefix) + '-aes.key') as fp:
+            self.content_key_prefix = fp.readline()[:-1]
+            self.content_key_id = b64decode(fp.readline()[:-1])
             self.content_key_bits = b64decode(fp.readline())
-
         self.encoded_packets = {}
         self.pb = PubSub(self.app, self.prefix)
         self.pb.base_prefix = self.prefix
@@ -114,12 +114,16 @@ class PutfileClient(object):
         segment_size = segment_size - 100 # deduct the TLV overhead
         seg_cnt = (len(b_array) + segment_size - 1) // segment_size
         final_block_id = Component.from_segment(seg_cnt - 1)
+        content_key_name = Name.from_str(self.content_key_prefix)
+        content_key_name.append(Component.from_bytes(self.content_key_id))
+        logging.info(Name.to_str(content_key_name))
         packet_params = [[
             name_at_repo + [Component.from_segment(seq)],
             b_array[seq * segment_size : (seq + 1) * segment_size],
             freshness_period,
             final_block_id,
             self.prefix,
+            content_key_name,
             self.content_key_bits
         ] for seq in range(seg_cnt)]
 

@@ -16,7 +16,7 @@ from Cryptodome.Signature import DSS
 from Cryptodome.PublicKey import ECC
 
 from ndn.app import NDNApp
-from ndn.encoding import Name, InterestParam, NonStrictName, DecodeError, FormalName, SignaturePtrs, SignatureType, parse_and_check_tl
+from ndn.encoding import Name, Component, InterestParam, NonStrictName, DecodeError, FormalName, SignaturePtrs, SignatureType, parse_and_check_tl
 from ndn.types import InterestNack, InterestTimeout
 from . import ReadHandle, CommandHandle
 from ..command.repo_commands import RepoCommandParameter, RepoCommandResponse
@@ -32,7 +32,7 @@ class WriteCommandHandle(CommandHandle):
     TODO: Add validator
     """
     def __init__(self, app: NDNApp, storage: Storage, pb: PubSub, read_handle: ReadHandle,
-                 config: dict, insert_callback: None):
+                 config: dict, insert_callback: None, content_encryption_keys: dict):
         """
         Write handle need to keep a reference to write handle to register new prefixes.
 
@@ -45,12 +45,7 @@ class WriteCommandHandle(CommandHandle):
         self.m_read_handle = read_handle
         self.prefix = None
         self.register_root = config['repo_config']['register_root']
-        self.content_key_path = config['security_config']['content_key']['path']
-
-        with open(self.content_key_path) as fp:
-            self.content_key_name = fp.readline()[:-1]
-            self.content_key_bits = b64decode(fp.readline())
-
+        self.content_encryption_keys = content_encryption_keys
         self.insert_callback = insert_callback
 
     async def listen(self, prefix: NonStrictName):
@@ -207,17 +202,21 @@ class WriteCommandHandle(CommandHandle):
         semaphore = aio.Semaphore(10)
         block_id = start_block_id
         b_array = bytearray()
-        #Todo: Verify signature in concurrent_fetcher, or later in loop.
         async for (data_name, _, content, data_bytes) in concurrent_fetcher(self.app, name, start_block_id, end_block_id, semaphore, forwarding_hint=forwarding_hint,
                                                                             validator=self.verify_signature):
-            # Decryption
+            # decryption
             logging.debug(f'Received Data content size', len(content))
             pack_bytes = parse_and_check_tl(bytes(content), TLV_ENCRYPTED_CONTENT_TYPE)
             pack = EncryptedPack.parse(pack_bytes)
-            cipher = AES.new(self.content_key_bits, AES.MODE_CBC, pack.iv)
-            payload = unpad(cipher.decrypt(bytes(pack.payload)), 16)
-            b_array.extend(payload)
-            block_id += 1
+            logging.info(self.content_encryption_keys)
+            content_key_bits = self.content_encryption_keys[bytes(Component.get_value(pack.name[-1]))]
+            if content_key_bits is not None:
+                cipher = AES.new(content_key_bits, AES.MODE_CBC, pack.iv)
+                payload = unpad(cipher.decrypt(bytes(pack.payload)), 16)
+                b_array.extend(payload)
+                block_id += 1
+            else:
+                logging.info('Cannot find decryption key for %s', Name.to_str(pack.name))
 
         if self.insert_callback != None:
             self.insert_callback(name, b_array)
@@ -239,7 +238,7 @@ class WriteCommandHandle(CommandHandle):
         try:
             key_bits = self.app.keychain.get(identity).default_key().key_bits
         except (KeyError, AttributeError):
-            logging.error('Cannot find pub key from keychain')
+            logging.debug('Cannot find pub key from keychain')
             return False
         pk = ECC.import_key(key_bits)
         verifier = DSS.new(pk, 'fips-186-3', 'der')

@@ -52,6 +52,7 @@ if not os.environ.get('READTHEDOCS'):
         encrypted_content.pack = EncryptedPack()
         encrypted_content.pack.payload = ct_bytes
         encrypted_content.pack.name = content_key_name
+        encrypted_content.pack.iv = iv
         content = encrypted_content.encode()
         # The keychain's sqlite3 connection is not thread-safe. Create a new NDNApp instance for
         # each process, so that each process gets a separate sqlite3 connection
